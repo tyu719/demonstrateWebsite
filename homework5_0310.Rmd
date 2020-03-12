@@ -1,0 +1,212 @@
+---
+title: "Coronavirus in China - 2020"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(nCov2019)
+library(tidyverse)
+library(ggplot2)
+library(leaflet)
+library(rgdal)
+library(leafletCN)
+library(shiny)
+library(plotly)
+library(pals)
+library(leaflet.minicharts)
+```
+
+Column {data-width=300}
+-----------------------------------------------------------------------
+
+### Nation Wide Display Options
+
+```{r}
+nCov = get_nCov2019()
+ 
+sliderInput("date", "Date(UTC/GMT-04:00)",
+            min = as.Date("2019-12-01"), max = Sys.Date()-1, 
+            value = as.Date(Sys.Date()-1),
+            animate = animationOptions(interval = 1500)
+            )   
+
+helpText("*Click to autodisplay")
+```
+
+### Province Specific Display Options
+
+```{r}
+
+selectInput("prov", "Select a province",
+            c("Anhui","Beijing", "Chongqing","Fujian",
+              "Gansu","Guizhou","Guangdong","Guangxi",
+              "Hainan","Hebei","Heilongjiang","Henan","Hubei","Hunan","InnerMongolia",
+              "Jiangsu","Jiangxi","Jilin","Liaoning","Ningxia",
+              "Qinghai","Shandong","Shanxi","Shanxi","Shanghai","Sichuan",
+              "Tianjin","Tibet",
+              "Xinjiang","Yunnan","Zhejiang",
+              "Taiwan","Hong Kong","Macau"),
+            selected = "Hubei"
+            )
+
+sliderInput("date_range", 
+            "Choose the Date Range for histgram display:", 
+            min = as.Date("2019-12-01"), max = Sys.Date(), 
+            value = c(as.Date("2020-01-01"), Sys.Date())
+            )
+            
+```
+
+### Data Source
+
+```{r}
+
+h4("Latest updated date (UTC/GMT+08:00)")
+print(nCov$lastUpdateTime)
+
+```
+
+Column {.tabset data-width=700}
+-----------------------------------------------------------------------
+
+### Nationwide cumlative cases
+
+```{r}
+nCov2 <- load_nCov2019()
+
+dat_cn = data.frame(region=regionNames("china"))
+dat_cn$province<-c("Xinjiang","Tibet","Inner Mongolia","Qinghai",
+               "Sichuan","Heilongjiang","Gansu","Yunnan",
+               "Guangxi","Hunan","Shanxi","Guangdong","Jilin",
+               "Hebei","Hubei","Guizhou","Shandong",
+               "Jiangxi","Henan","Liaoning","Shanxi",
+               "Anhui","Fujian","Zhejiang","Jiangsu","Chongqing",
+               "Ningxia","Hainan","Taiwan","Beijing","Tianjin","Shanghai",
+               "Hong Kong","Macau")
+
+a <- nCov2[]
+nCov2 <- a %>%
+  group_by(time, province) %>%
+  summarise(total_confirm = sum(cum_confirm, na.rm = TRUE),
+            total_heal = sum(cum_heal, na.rm = TRUE),
+            total_dead = sum(cum_dead, na.rm = TRUE))
+  
+dat_cn <- left_join(dat_cn,nCov2,by="province")
+
+for (i in 1:nrow(dat_cn)){
+  dat_cn[i,2]<-paste0("<strong>Province: </strong>",dat_cn$province[i],"<br>",
+                      "<strong>Confirmed Cases: </strong>",dat_cn$total_confirm[i])
+}
+
+#create a function for color pal
+  qpal <- colorQuantile("Oranges", c(0,10,100,500,1000,5000,100000), n = 7)
+  
+leaflet::renderLeaflet({
+  
+  #filter the data by input date
+  dats <- as.Date(input$date)
+  dat_cn <- filter(dat_cn, time == dats)
+  
+  #combine the datasets for plotting
+  cn_map <- leafletGeo("china", dat_cn)
+  
+  #plotting
+  map <- leaflet(cn_map) %>% 
+    addTiles() %>% 
+    setView(103.842773, 34.597042, zoom = 4) %>% 
+    addPolygons(fillColor = ~qpal(as.numeric(dat_cn$total_confirm)), fillOpacity = 0.8,
+              color = "#000000", weight = 1, popup = cn_map$value)
+  
+  #create data for minipie
+  prov_path <- system.file("geojson/china.json", package = "leafletCN")
+  prov_map <- read.geoShape(prov_path)
+  prov_data <- prov_map@data
+  head(prov_data) 
+  
+  prov_data$province <- prov_data$name
+  prov_data$province <- as.character(prov_data$province)
+  dat_cn$province <- as.character(dat_cn$province)
+  
+  trying <- left_join(dat_cn, prov_data, by = c("region" = "province"))
+
+  colors <- c("#3093e5", "#fcba50", "#a0d9e8")
+  
+  trying <- mutate(trying, 
+                   remain_confirm = total_confirm - total_heal - total_dead)
+
+ map %>%
+  addMinicharts(
+    trying$cp1, trying$cp2,
+    type = "pie",
+    chartdata = trying[, c("remain_confirm", "total_heal", "total_dead")], 
+    colorPalette = c("#fb8072", "#66c2a5", "grey"),
+    width = 20) 
+  
+})
+
+
+```
+
+### Nationwide remaining cases
+
+```{r}
+leaflet::renderLeaflet({
+    
+  #filter the data by input date
+  dats <- as.Date(input$date)
+  dat_cn <- filter(dat_cn, time == dats)
+  
+  #create data for minipie
+  prov_path <- system.file("geojson/china.json", package = "leafletCN")
+  prov_map <- read.geoShape(prov_path)
+  prov_data <- prov_map@data
+  head(prov_data) 
+  
+  prov_data$province <- prov_data$name
+  prov_data$province <- as.character(prov_data$province)
+  dat_cn$province <- as.character(dat_cn$province)
+  
+  trying <- left_join(dat_cn, prov_data, by = c("region" = "province"))
+  
+  trying <- mutate(trying, 
+                   remain_confirm = total_confirm - total_heal - total_dead)
+  
+  for (i in 1:nrow(dat_cn)){
+  dat_cn[i,2]<-paste0("<strong>Province: </strong>",dat_cn$province[i],"<br>",
+                      "<strong>Remaining Cases: </strong>",trying$remain_confirm[i])
+  }  
+
+  #combine the datasets for plotting
+  cn_map <- leafletGeo("china", dat_cn)
+
+map <- leaflet(cn_map) %>% 
+    addTiles() %>% 
+    setView(103.842773, 34.597042, zoom = 4) %>% 
+    addPolygons(fillColor = ~qpal(as.numeric(trying$remain_confirm)), fillOpacity = 0.8,
+              color = "#000000", weight = 1, popup = cn_map$value) 
+})
+```
+
+### Province Specific Trend
+
+```{r}
+
+cov2 = load_nCov2019(lang = 'en')[[2]]
+renderPlotly({  
+  Dates_min <- input$date_range[1]
+  Dates_max <- input$date_range[2]
+  
+  ggplot(data = cov2 %>% 
+           filter(province == input$prov, time > Dates_min) %>%
+           filter(province == input$prov, time < Dates_max) %>%
+           select(-province, -suspected) %>% gather("measure", "number", -time)) +
+    geom_col(aes(x = time, y = number, fill = measure), alpha = 0.5) + ggtitle(paste("Bar plot of Confirmed/Healed/Dead Cases in", as.character(input$prov))) + theme_bw()
+  
+})
+```
+
